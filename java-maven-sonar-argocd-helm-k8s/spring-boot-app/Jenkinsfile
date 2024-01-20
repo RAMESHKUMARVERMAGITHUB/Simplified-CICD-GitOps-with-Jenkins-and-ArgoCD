@@ -1,17 +1,10 @@
 pipeline{
-    // agent any
-
-    agent {
-        docker {
-            image 'abhishekf5/maven-abhishek-docker-agent:v1'
-            args '--user root -v /var/run/docker.sock:/var/run/docker.sock'
-        }
-    }
-
+    agent any
   
     tools{
         jdk 'jdk17'
         nodejs 'node16'
+        maven 'maven'
     }
     environment {
         SCANNER_HOME=tool 'sonar-scanner'
@@ -90,7 +83,7 @@ pipeline{
       stage('Deploy to Kubernetes') {
             steps {
                 script {
-                    dir('spring-boot-app-manifests') {
+                    dir('java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests') {
                         withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
                             // Apply deployment and service YAML files
                             sh 'kubectl apply -f deployment.yml'
