@@ -1,0 +1,111 @@
+pipeline{
+    // agent any
+
+    agent {
+        docker {
+            image 'abhishekf5/maven-abhishek-docker-agent:v1'
+            args '--user root -v /var/run/docker.sock:/var/run/docker.sock'
+        }
+    }
+
+  
+    tools{
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+    environment {
+        SCANNER_HOME=tool 'sonar-scanner'
+    }
+    stages {
+        stage('clean workspace'){
+            steps{
+                cleanWs()
+            }
+        }
+        stage('Checkout from Git'){
+            steps{
+                git branch: 'main', url: 'https://github.com/rameshkumarvermagithub/Simplified-CICD-GitOps-with-Jenkins-and-ArgoCD.git'
+            }
+        }
+        stage('Build and Test') {
+            steps {
+                sh 'ls -ltr'
+                // build the project and create a JAR files
+                sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
+            }
+        }
+        stage("Sonarqube Analysis "){
+            steps{
+                withSonarQubeEnv('sonar-server') {
+                    sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn sonar:sonar'
+                }
+            }
+        }
+        stage("quality gate"){
+           steps {
+                script {
+                    waitForQualityGate abortPipeline: false, credentialsId: 'sonar'
+                }
+            }
+        }
+        // stage('Install Dependencies') {
+        //     steps {
+        //         sh "npm install"
+        //     }
+        // }
+        stage('OWASP FS SCAN') {
+            steps {
+                dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+         stage('TRIVY FS SCAN') {
+            steps {
+                sh "trivy fs . > trivyfs.txt"
+            }
+        }
+        stage("Docker Build & Push"){
+            steps{
+                script{
+                   withDockerRegistry(credentialsId: 'docker', toolName: 'docker'){
+                       sh "cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && docker build -t spring-boot-app ."
+                       sh "docker tag spring-boot-app rameshkumarverma/spring-boot-app:latest"
+                       sh "docker push rameshkumarverma/spring-boot-app:latest"
+                    }
+                }
+            }
+        }
+        stage("TRIVY"){
+            steps{
+                sh "trivy image rameshkumarverma/spring-boot-app:latest > trivyimage.txt"
+            }
+        }
+        // stage("deploy_docker"){
+        //     steps{
+        //         sh "docker stop spring-boot-app || true"  // Stop the container if it's running, ignore errors
+        //         sh "docker rm spring-boot-app || true" 
+        //         sh "docker run -d --name spring-boot-app -p 8080:8080 rameshkumarverma/spring-boot-app:latest"
+        //     }
+        // }
+      stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    dir('spring-boot-app-manifests') {
+                        withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'k8s', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
+                            // Apply deployment and service YAML files
+                            sh 'kubectl apply -f deployment.yml'
+                            sh 'kubectl apply -f service.yml'
+
+                            // Get the external IP or hostname of the service
+                            // def externalIP = sh(script: 'kubectl get svc amazon-service -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"', returnStdout: true).trim()
+
+                            // Print the URL in the Jenkins build log
+                            // echo "Service URL: http://${externalIP}/"
+                        }
+                    }
+                }
+            }
+        }
+
+    }
+}
